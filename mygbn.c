@@ -104,3 +104,14 @@ int mygbn_recv(struct mygbn_receiver* mygbn_receiver, unsigned char* buf, int le
 void mygbn_close_receiver(struct mygbn_receiver* mygbn_receiver) {
 
 }
+//NEW
+struct   MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, unsigned int length){
+	struct MYGBN_Packet *packet = malloc(sizeof(struct MYGBN_Packet));
+
+	strcpy(packet->protocol, "gbn");
+	packet->type = type;
+	packet->seqNum = seqNum;
+	packet->length = length;
+
+	return packet;
+}
