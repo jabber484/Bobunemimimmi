@@ -115,3 +115,11 @@ struct   MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, uns
 
 	return packet;
 }
+
+//NEW1.2
+int nextSize(int fileSize){
+	if (fileSize < MAX_PAYLOAD_SIZE)
+		return fileSize;
+	else
+		return MAX_PAYLOAD_SIZE;
+}
