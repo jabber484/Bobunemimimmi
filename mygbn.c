@@ -39,24 +39,59 @@ void mygbn_init_sender(struct mygbn_sender* mygbn_sender, char* ip, int port, in
 
 	mygbn_sender->sd = sd;
 	mygbn_sender->servaddr = servaddr;
+	mygbn_sender->N = N;
+	mygbn_sender->timeout = timeout;
 	printf("Client UP\n");
 }
 
 int mygbn_send(struct mygbn_sender* mygbn_sender, unsigned char* buf, int len){
-  	int addrlen = sizeof(mygbn_sender->servaddr);
-  	// int send = sendto(mygbn_sender->sd, buf, len, 0, (struct sockaddr *)&(mygbn_sender->servaddr), addrlen);
-
+  	int FragementSize = 0;
   	int remainingLength = len;
   	int sent = 0;
-  	int next = 0;
-  	while((next = nextFragement(remainingLength)) > 0){
-  		char *packet = (char *)malloc(sizeof(char)*next);
-  		memcpy(packet,(char *)&buf[sent],next);
-  		int send = sendto(mygbn_sender->sd, packet, next, 0, (struct sockaddr *)&(mygbn_sender->servaddr), addrlen);
+  	int seqNum = 0;
 
+  	int window[(len/MAX_PAYLOAD_SIZE) + 1 - (len%MAX_PAYLOAD_SIZE == 0)];
+  	memset(window, 0, sizeof(int)*((len/MAX_PAYLOAD_SIZE) + 1 - (len%MAX_PAYLOAD_SIZE == 0)) );
+  	pthread_t windowThread[mygbn_sender->N];
+  	int avaliblewindow = mygbn_sender->N;
+
+  	while((FragementSize = nextFragement(remainingLength)) > 0){
+		// Choose a window (thread)
+	  	
+	  	// Window function (pthread point)
+		// Create payload 
+  		char *payload = (char *)malloc(sizeof(char)*FragementSize);
+  		memcpy(payload, (char *)&buf[sent], FragementSize);
+
+		// Create packet
+	  	struct MYGBN_Packet *packet = createPacket(DataPacket, seqNum, payload, FragementSize);
+	  	struct MYGBN_Packet *response = malloc(sizeof(struct MYGBN_Packet));
+
+  		do {
+	  		// Send Data
+	  		if(sendto(mygbn_sender->sd, (char *)packet, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_sender->servaddr), sizeof(mygbn_sender->servaddr)) == -1){
+	  			printf("ERROR on sending Data\n");
+	  			exit(-1);
+	  		}
+
+	  		// Wait for Ack
+  			int addrlen = sizeof(mygbn_sender->servaddr);
+	  		if(recvfrom(mygbn_sender->sd, (char *)response, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&mygbn_sender->servaddr, (socklen_t *)&addrlen) == -1){
+	  			printf("ERROR on receiving Ack\n");
+	  			exit(-1);
+	  		}
+	  		// Ack is correct
+	  		if(response->type == AckPacket && response->seqNum == seqNum){
+	  			seqNum++;
+	  			break;
+	  		}
+  		} while(1);
+
+  		free(payload);
   		free(packet);
-  		sent += send;
-  		remainingLength -= send;
+  		free(response);
+  		sent += FragementSize;
+  		remainingLength -= FragementSize;
   	}
 
   	return sent;
@@ -106,13 +141,28 @@ int mygbn_recv(struct mygbn_receiver* mygbn_receiver, unsigned char* buf, int le
   	int received = 0;
   	int i = 0;
   	for(i = 0; i < 8 && lastPackage == MAX_PAYLOAD_SIZE; i++){
-  		char *packet = (char *)malloc(sizeof(char)*MAX_PAYLOAD_SIZE);
-  		int recv = recvfrom(mygbn_receiver->sd, packet, MAX_PAYLOAD_SIZE, 0, (struct sockaddr *)&mygbn_receiver->servaddr, (socklen_t *)&addrlen);
-  		memcpy((char *)&buf[received],packet,recv);
+		// Get packet 
+		struct MYGBN_Packet *packet = malloc(sizeof(struct MYGBN_Packet));
+  		if(recvfrom(mygbn_receiver->sd, (char *)packet, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&mygbn_receiver->servaddr, (socklen_t *)&addrlen) == -1){
+  			printf("ERROR on receiving\n");
+  			exit(-1);
+  		} 
+  		// Store payload
+  		int payloadSize = packet->length - HEADER_SIZE;
+		if(payloadSize > 0)	
+  			memcpy((char *)&buf[received], packet->payload, payloadSize);
+
+  		// Send Ack
+		struct MYGBN_Packet *ack = createPacket(AckPacket, packet->seqNum, NULL, 0);
+  		if(sendto(mygbn_receiver->sd, (char *)ack, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_receiver->servaddr), addrlen) == -1){
+  			printf("ERROR on sending Ack\n");
+  			exit(-1);
+  		}
 
   		free(packet);
-  		received += recv;
-  		lastPackage = recv;
+  		free(ack);
+  		received += payloadSize;
+  		lastPackage = payloadSize;
   	}
 
 	return received;
@@ -123,20 +173,26 @@ void mygbn_close_receiver(struct mygbn_receiver* mygbn_receiver) {
 }
 
 // Utility
-struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, unsigned int length){
+struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, char *payload, int payloadSize){
 	struct MYGBN_Packet *packet = malloc(sizeof(struct MYGBN_Packet));
 
 	strcpy((char *)packet->protocol, (char *)"gbn");
 	packet->type = type;
 	packet->seqNum = seqNum;
-	packet->length = length;
+	packet->length = payloadSize + HEADER_SIZE;
+	if(payloadSize > 0)
+		memcpy((char *)packet->payload, payload, payloadSize);
 
 	return packet;
 }
-
 int nextFragement(int fileSize){
 	if (fileSize < MAX_PAYLOAD_SIZE)
 		return fileSize;
 	else
 		return MAX_PAYLOAD_SIZE;
+}
+
+// Thread Function
+void *sender_pthread(void *data){
+
 }

@@ -6,7 +6,8 @@
 #define __mygbn_h__
 
 #define MAX_PAYLOAD_SIZE 512
-//NEW
+#define HEADER_SIZE 12
+
 #define DataPacket 0xA0
 #define AckPacket 0xA1
 #define EndPacket 0xA2
@@ -22,6 +23,8 @@ struct MYGBN_Packet {
 struct mygbn_sender {
   int sd; // GBN sender socket
   struct sockaddr_in servaddr;
+  int N;
+  int timeout;
   // ... other member variables
 };
 
@@ -40,6 +43,6 @@ int mygbn_recv(struct mygbn_receiver* mygbn_receiver, unsigned char* buf, int le
 void mygbn_close_receiver(struct mygbn_receiver* mygbn_receiver);
 
 //Utility 
-struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, unsigned int length);
+struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, char *payload, int payloadSize);
 int nextFragement(int fileSize);
 #endif
