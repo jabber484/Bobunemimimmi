@@ -49,7 +49,7 @@ int mygbn_send(struct mygbn_sender* mygbn_sender, unsigned char* buf, int len){
   	int remainingLength = len;
   	int sent = 0;
   	int next = 0;
-  	if((next = nextPacket(remainingLength)) > 0){
+  	while((next = nextFragement(remainingLength)) > 0){
   		char *packet = (char *)malloc(sizeof(char)*next);
   		memcpy(packet,(char *)&buf[sent],next);
   		int send = sendto(mygbn_sender->sd, packet, next, 0, (struct sockaddr *)&(mygbn_sender->servaddr), addrlen);
@@ -102,17 +102,17 @@ int mygbn_recv(struct mygbn_receiver* mygbn_receiver, unsigned char* buf, int le
   	memset(buf,'\0', len);
   	int addrlen = sizeof(mygbn_receiver->servaddr);
 
-  	int remainingLength = len;
+  	int lastPackage = MAX_PAYLOAD_SIZE;
   	int received = 0;
-  	int next;
-  	if((next = nextPacket(remainingLength)) > 0){
-  		char *packet = (char *)malloc(sizeof(char)*next);
-  		int recv = recvfrom(mygbn_receiver->sd, packet, next, 0, (struct sockaddr *)&mygbn_receiver->servaddr, (socklen_t *)&addrlen);
-  		memcpy((char *)&buf[received],packet,next);
+  	int i = 0;
+  	for(i = 0; i < 8 && lastPackage == MAX_PAYLOAD_SIZE; i++){
+  		char *packet = (char *)malloc(sizeof(char)*MAX_PAYLOAD_SIZE);
+  		int recv = recvfrom(mygbn_receiver->sd, packet, MAX_PAYLOAD_SIZE, 0, (struct sockaddr *)&mygbn_receiver->servaddr, (socklen_t *)&addrlen);
+  		memcpy((char *)&buf[received],packet,recv);
 
   		free(packet);
   		received += recv;
-  		remainingLength -= recv;
+  		lastPackage = recv;
   	}
 
 	return received;
@@ -134,7 +134,7 @@ struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, unsig
 	return packet;
 }
 
-int nextPacket(int fileSize){
+int nextFragement(int fileSize){
 	if (fileSize < MAX_PAYLOAD_SIZE)
 		return fileSize;
 	else

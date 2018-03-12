@@ -41,5 +41,5 @@ void mygbn_close_receiver(struct mygbn_receiver* mygbn_receiver);
 
 //Utility 
 struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, unsigned int length);
-int nextPacket(int fileSize);
+int nextFragement(int fileSize);
 #endif
