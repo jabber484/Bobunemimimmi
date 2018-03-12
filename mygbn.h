@@ -38,6 +38,8 @@ struct mygbn_receiver {
 void mygbn_init_receiver(struct mygbn_receiver* mygbn_receiver, int port);
 int mygbn_recv(struct mygbn_receiver* mygbn_receiver, unsigned char* buf, int len);
 void mygbn_close_receiver(struct mygbn_receiver* mygbn_receiver);
-//NEW
-struct  MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, unsigned int length);
+
+//Utility 
+struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, unsigned int length);
+int nextPacket(int fileSize);
 #endif

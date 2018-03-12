@@ -44,17 +44,26 @@ void mygbn_init_sender(struct mygbn_sender* mygbn_sender, char* ip, int port, in
 
 int mygbn_send(struct mygbn_sender* mygbn_sender, unsigned char* buf, int len){
   	int addrlen = sizeof(mygbn_sender->servaddr);
+  	// int send = sendto(mygbn_sender->sd, buf, len, 0, (struct sockaddr *)&(mygbn_sender->servaddr), addrlen);
 
-  	int send = sendto(mygbn_sender->sd, buf, len, 0, (struct sockaddr *)&(mygbn_sender->servaddr), addrlen);
+  	int remainingLength = len;
+  	int sent = 0;
+  	int next = 0;
+  	if((next = nextPacket(remainingLength)) > 0){
+  		char *packet = (char *)malloc(sizeof(char)*next);
+  		memcpy(packet,(char *)&buf[sent],next);
+  		int send = sendto(mygbn_sender->sd, packet, next, 0, (struct sockaddr *)&(mygbn_sender->servaddr), addrlen);
 
- 	// Debug
-	// printf("Send: %d\n\n", send);
+  		free(packet);
+  		sent += send;
+  		remainingLength -= send;
+  	}
 
-  	return send;
+  	return sent;
 }
 
 void mygbn_close_sender(struct mygbn_sender* mygbn_sender){
-
+	close(mygbn_sender->sd);
 }
 
 void mygbn_init_receiver(struct mygbn_receiver* mygbn_receiver, int port){
@@ -90,25 +99,34 @@ void mygbn_init_receiver(struct mygbn_receiver* mygbn_receiver, int port){
 }
 
 int mygbn_recv(struct mygbn_receiver* mygbn_receiver, unsigned char* buf, int len){
-  	int addrlen = sizeof(mygbn_receiver->servaddr);
   	memset(buf,'\0', len);
-  	int recv = recvfrom(mygbn_receiver->sd, buf, len, 0, (struct sockaddr *)&mygbn_receiver->servaddr, (socklen_t *)&addrlen);
+  	int addrlen = sizeof(mygbn_receiver->servaddr);
 
-  	// Debug
-	// printf("%d\n", recv);
-	// printf("%s\n", buf);
+  	int remainingLength = len;
+  	int received = 0;
+  	int next;
+  	if((next = nextPacket(remainingLength)) > 0){
+  		char *packet = (char *)malloc(sizeof(char)*next);
+  		int recv = recvfrom(mygbn_receiver->sd, packet, next, 0, (struct sockaddr *)&mygbn_receiver->servaddr, (socklen_t *)&addrlen);
+  		memcpy((char *)&buf[received],packet,next);
 
-	return recv;
+  		free(packet);
+  		received += recv;
+  		remainingLength -= recv;
+  	}
+
+	return received;
 }
 
 void mygbn_close_receiver(struct mygbn_receiver* mygbn_receiver) {
-
+	close(mygbn_receiver->sd);
 }
-//NEW
-struct   MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, unsigned int length){
+
+// Utility
+struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, unsigned int length){
 	struct MYGBN_Packet *packet = malloc(sizeof(struct MYGBN_Packet));
 
-	strcpy(packet->protocol, "gbn");
+	strcpy((char *)packet->protocol, (char *)"gbn");
 	packet->type = type;
 	packet->seqNum = seqNum;
 	packet->length = length;
@@ -116,8 +134,7 @@ struct   MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, uns
 	return packet;
 }
 
-//NEW1.2
-int nextSize(int fileSize){
+int nextPacket(int fileSize){
 	if (fileSize < MAX_PAYLOAD_SIZE)
 		return fileSize;
 	else
