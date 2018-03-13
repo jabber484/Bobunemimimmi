@@ -5,9 +5,14 @@
 #include <unistd.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <pthread.h>
 #include "mygbn.h"
+
+
+
+
 
 void mygbn_init_sender(struct mygbn_sender* mygbn_sender, char* ip, int port, int N, int timeout){
 	struct hostent *ht;
@@ -196,3 +201,71 @@ int nextFragement(int fileSize){
 void *sender_pthread(void *data){
 
 }
+
+
+/*
+
+
+int timeout = 5;//No need 
+int ack = 0;//No need too
+#define waitingTime 3;
+
+pthread_t timeThread;
+pthread_mutex_t timelock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t signal = PTHREAD_COND_INITIALIZER;
+
+
+void *waitForTimeOut() {
+  struct timespec ts;
+  struct timeval tp;
+
+  while(1) {
+    printf("Set timeout deadline for ACK[%d]\n", ack);
+    pthread_mutex_lock(&timelock);
+
+    gettimeofday(&tp, NULL);
+
+    ts.tv_sec = tp.tv_sec;
+    ts.tv_nsec = tp.tv_usec * 1000;
+    ts.tv_sec += waitingTime;     // set wait deadline
+
+    int timeWaiter;
+    printf("waiting......\n");
+    timeWaiter = pthread_cond_timedwait(&signal, &timelock, &ts);
+
+    if (timeWaiter == ETIMEDOUT) {
+      printf("\nTimeout, start resend from packet %d.\n\n", ack);
+    } else {
+      printf("ACK[%d] received. Reset the timer.\n", ack);
+      ack++;
+    }
+    pthread_mutex_unlock(&timelock);
+  }
+  return NULL;
+}
+
+int main(int argc, char **argv) {
+  int rAck;
+
+  // start timing threadh
+  pthread_create(&timeThread, NULL, waitForTimeOut, NULL);
+
+  while(1) {
+      scanf("%d", &rAck);
+      if(rAck >= ack) {
+        pthread_mutex_lock(&timelock);
+        pthread_cond_signal(&signal);
+        //printf("ack = %d \n",ack);
+        if (ack == 5){
+          pthread_mutex_unlock(&timelock);
+          break;
+        }
+        pthread_mutex_unlock(&timelock);
+      }else{
+        printf("ACK[%d] not match ACK[%d]. Drop the ACK[%d].\n", rAck,ack,rAck);
+      } 
+  }
+}
+
+*/
+
