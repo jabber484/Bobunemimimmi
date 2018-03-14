@@ -12,6 +12,15 @@
 #define AckPacket 0xA1
 #define EndPacket 0xA2
 
+int receivedPacket;
+
+struct senderThread_data {
+  int len;
+  int *sent;
+  struct mygbn_sender *mygbn_sender;
+  unsigned char *buf;
+};
+
 struct MYGBN_Packet {
   unsigned char protocol[3];                  /* protocol string (3 bytes) "gbn" */
   unsigned char type;                         /* type (1 byte) */
@@ -25,7 +34,6 @@ struct mygbn_sender {
   struct sockaddr_in servaddr;
   int N;
   int timeout;
-  // ... other member variables
 };
 
 void mygbn_init_sender(struct mygbn_sender* mygbn_sender, char* ip, int port, int N, int timeout);
@@ -45,4 +53,8 @@ void mygbn_close_receiver(struct mygbn_receiver* mygbn_receiver);
 //Utility 
 struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, char *payload, int payloadSize);
 int nextFragement(int fileSize);
+
+// Thread
+void *sender_pthread(void *data);
+void *sender_ackListener(void *data);
 #endif
