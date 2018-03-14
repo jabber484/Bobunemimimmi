@@ -215,7 +215,10 @@ void mygbn_close_receiver(struct mygbn_receiver* mygbn_receiver) {
 struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, char *payload, int payloadSize){
 	struct MYGBN_Packet *packet = malloc(sizeof(struct MYGBN_Packet));
 
-	strcpy((char *)packet->protocol, (char *)"gbn");
+	packet->protocol[0] = 'g';
+	packet->protocol[1] = 'b';
+	packet->protocol[2] = 'n';
+	
 	packet->type = type;
 	packet->seqNum = seqNum;
 	packet->length = payloadSize + HEADER_SIZE;
