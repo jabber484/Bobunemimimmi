@@ -59,4 +59,5 @@ int nextFragement();
 void *sender_pthread(void *data);
 void *sender_ackListener(void *data);
 void *sender_final(void *data);
+void *sender_timer(void *data);
 #endif
