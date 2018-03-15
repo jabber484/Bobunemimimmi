@@ -22,6 +22,7 @@ int killMode;
 pthread_t timeThread;
 pthread_mutex_t timelock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t signal = PTHREAD_COND_INITIALIZER;
+pthread_cond_t timerEnd = PTHREAD_COND_INITIALIZER;
 
 // Window set-up
 int N;
@@ -301,7 +302,7 @@ void *sender_pthread(void *data) {
 	void resendWindow(){
 		j = windowHead;
 		for(i = 0; i < N; i++) {
-			if(window[j] != 0){ /* Use if a  Window is occupied*/
+			if(window[j] > lastAck){ /* Use if a Window is occupied*/
 				// make packet
 				int packetSeqNum = window[j];
 				char *address = (char *)&buf[(packetSeqNum - 1) * MAX_PAYLOAD_SIZE];
@@ -323,70 +324,124 @@ void *sender_pthread(void *data) {
 	}
 
   	pthread_mutex_lock(&mutex);
-	while(1){
-		FragementSize = nextFragement();
-		printf("FragementSize %d, Remaining %d\n", FragementSize, remainingLength);
+	while(lastAck != fragementNum){
+		if(remainingLength > 0 ) {
+			printf("Remaining %d\n", remainingLength);
+			while(avalibleWindow > 0 && remainingLength > 0){
+				// Start a transfer
+				j = windowHead;
+				for(i = 0; i < N; i++) {
+					if(window[j] == 0){ /* Use a Window if avalible */
+						// make packet
+						FragementSize = nextFragement();
+						if(FragementSize == 0) break;
+						int packetSeqNum = base + 1 + i;
+						window[j] = packetSeqNum;
+						char *address = (char *)&buf[(base + i)*MAX_PAYLOAD_SIZE];
+						struct MYGBN_Packet *packet = createPacket(DataPacket, packetSeqNum, address, FragementSize);
+						windowPacketSize[j] = FragementSize;
+						processing += FragementSize;
 
-		if(FragementSize > 0 ) {
-			// Start a transfer
-			j = windowHead;
-			for(i = 0; i < N; i++) {
-				if(window[j] == 0){ /* Use a Window if avalible */
-					// make packet
-					int packetSeqNum = base + 1 + i;
-					window[j] = packetSeqNum;
-					char *address = (char *)&buf[(base + i)*MAX_PAYLOAD_SIZE];
-					struct MYGBN_Packet *packet = createPacket(DataPacket, packetSeqNum, address, FragementSize);
-					windowPacketSize[j] = FragementSize;
-					processing += FragementSize;
+						// send packet
+						printf("  [Sender]Sending %d with size %d\n", packetSeqNum, FragementSize);
+						if(sendto(mygbn_sender->sd, (char *)packet, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_sender->servaddr), sizeof(mygbn_sender->servaddr)) == -1){
+							printf("ERROR on sending Ack\n");
+							exit(-1);
+						}
+						printf("  [Sender]Sent %d\n", packetSeqNum);
 
-					// send packet
-					printf("  [Sender]Sending %d with size %d\n", packetSeqNum, FragementSize);
-					if(sendto(mygbn_sender->sd, (char *)packet, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_sender->servaddr), sizeof(mygbn_sender->servaddr)) == -1){
-						printf("ERROR on sending Ack\n");
-						exit(-1);
+						free(packet);
+						avalibleWindow--;
+						// break;
 					}
-					printf("  [Sender]Sent %d\n", packetSeqNum);
 
-					free(packet);
-					avalibleWindow--;
-					break;
+					// Next window
+					j = (j+1) % N;
 				}
-
-				// Next window
-				j = (j+1) % N;
 			}
-
-			// Check Usage
-			if(avalibleWindow == 0){
-				printf("  Sleeppp...\n");
+		}
+		printf("  Sleeppp...\n");
 
 				pthread_create(&timeThread, NULL, sender_timer, mygbn_sender); /* Start Timer */
 				pthread_cond_wait(&windowCond, &mutex); /* Wait for correct ACK */
 				
 				if(isTimeOut == 1){
-					pthread_join(timeThread, NULL);				
-					resendWindow();
 					isTimeOut = 0;
-				}
-			}
-
-		} else {
-			printf("[Reached Last of Packet] ACK: %d/%d (%.2f %%)\n", lastAck, fragementNum, ((float)lastAck/(float)fragementNum)*100);
-			while(lastAck != fragementNum) { /* Wait for other ack? */
-				pthread_create(&timeThread, NULL, sender_timer, mygbn_sender); /* Start Timer */
-				pthread_cond_wait(&windowCond, &mutex); /* Wait for correct ACK */
-
-				if(isTimeOut == 1){
-					pthread_join(timeThread, NULL);				
+					// pthread_join(timeThread, NULL);				
+					pthread_create(&timeThread, NULL, sender_timer, mygbn_sender); /* Start Timer */
 					resendWindow();
-					isTimeOut = 0;
+					pthread_cond_wait(&windowCond, &mutex); /* Wait for correct ACK */
 				}
-			} 
 
-			// All Packet Ack-ed
-			break;
-		}
+		// FragementSize = nextFragement();
+		// printf("FragementSize %d, Remaining %d\n", FragementSize, remainingLength);
+		// 	// Start a transfer
+		// 	j = windowHead;
+		// 	for(i = 0; i < N; i++) {
+		// 		if(window[j] == 0){ /* Use a Window if avalible */
+		// 			// make packet
+		// 			int packetSeqNum = base + 1 + i;
+		// 			window[j] = packetSeqNum;
+		// 			char *address = (char *)&buf[(base + i)*MAX_PAYLOAD_SIZE];
+		// 			struct MYGBN_Packet *packet = createPacket(DataPacket, packetSeqNum, address, FragementSize);
+		// 			windowPacketSize[j] = FragementSize;
+		// 			processing += FragementSize;
+
+		// 			// send packet
+		// 			printf("  [Sender]Sending %d with size %d\n", packetSeqNum, FragementSize);
+		// 			if(sendto(mygbn_sender->sd, (char *)packet, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_sender->servaddr), sizeof(mygbn_sender->servaddr)) == -1){
+		// 				printf("ERROR on sending Ack\n");
+		// 				exit(-1);
+		// 			}
+		// 			printf("  [Sender]Sent %d\n", packetSeqNum);
+
+		// 			free(packet);
+		// 			avalibleWindow--;
+		// 			break;
+		// 		}
+
+		// 		// Next window
+		// 		j = (j+1) % N;
+		// 	}
+
+			// Check Usage
+		// 	if(avalibleWindow == 0){
+		// 		printf("  Sleeppp...\n");
+
+		// 		pthread_create(&timeThread, NULL, sender_timer, mygbn_sender); /* Start Timer */
+		// 		pthread_cond_wait(&windowCond, &mutex); /* Wait for correct ACK */
+				
+		// 		if(isTimeOut == 1){
+		// 			isTimeOut = 0;
+		// 			// pthread_join(timeThread, NULL);				
+		// 			pthread_create(&timeThread, NULL, sender_timer, mygbn_sender); /* Start Timer */
+		// 			resendWindow();
+		// 			pthread_cond_wait(&windowCond, &mutex); /* Wait for correct ACK */
+		// 		}
+		// 	}
+
+		// } else {
+		// 	printf("[Reached Last of Packet] ACK: %d/%d (%.2f %%)\n", lastAck, fragementNum, ((float)lastAck/(float)fragementNum)*100);
+		// 	if(lastAck != fragementNum) { /* Wait for other ack? */
+		// 		pthread_create(&timeThread, NULL, sender_timer, mygbn_sender); /* Start Timer */
+		// 		pthread_cond_wait(&windowCond, &mutex); /* Wait for correct ACK */
+		// 		printf("FINAL WAKE: LAST %d\n", lastAck);
+
+		// 		if(lastAck != fragementNum){
+		// 			isTimeOut = 0;
+		// 			// pthread_join(timeThread, NULL);
+		// 			pthread_create(&timeThread, NULL, sender_timer, mygbn_sender); /* Start Timer */
+		// 			resendWindow();
+		// 			pthread_cond_wait(&windowCond, &mutex); /* Wait for correct ACK */
+		// 		}
+		// 	} else {
+
+		// 		// All Packet Ack-ed
+		// 		break;
+
+		// 	}
+
+		// }
 
 	}
 	pthread_mutex_unlock(&mutex);
@@ -436,7 +491,7 @@ void *sender_ackListener(void *data){
        			pthread_cond_signal(&signal);
        			pthread_mutex_unlock(&timelock);
 
-				int slideOffset = response->seqNum - headSeqNum + 1;
+				int slideOffset = response->seqNum - headSeqNum;
 				for(i = 0; i < slideOffset; i++){ /* reset window */
 					// remainingLength = remainingLength - windowPacketSize[windowHead];
 					windowPacketSize[windowHead] = 0;
@@ -447,8 +502,8 @@ void *sender_ackListener(void *data){
 					base++;
 					headSeqNum++;
 				}
-				pthread_cond_signal(&windowCond);
-			} else if(response->seqNum == headSeqNum - 1){
+				// pthread_cond_signal(&windowCond);
+			} else {
 				// Wait Timeout to start resend
 				printf("Old ACK %d received\n", response->seqNum);
 			} 
@@ -511,18 +566,20 @@ void *sender_timer(void *data) {
 		printf("[Timer]Kill Mode Dectected...Stopping Timer\n");
 	} else if (timeWaiter == ETIMEDOUT) {
 		if(killMode != 2)
-			printf("\n[Timer]Timeout, start resending packet %d.\n\n", lastAck);
+			printf("\n[Timer]Timeout, lastAck %d.\n\n", lastAck);
 		else
 			printf("[Timer]Timeout at Escape Sequence, start resending packet\n\n");
 		isTimeOut = 1;
-		pthread_mutex_lock(&mutex);
-		pthread_cond_signal(&windowCond);
-		pthread_mutex_unlock(&mutex);
+		// pthread_mutex_lock(&mutex);
+		// pthread_cond_signal(&windowCond);
+		// pthread_mutex_unlock(&mutex);
 	} else {
 		printf("[Timer]ACK %d received. Reset the timer.\n", lastAck);
 		isTimeOut = 0;
 	}
 	pthread_mutex_unlock(&timelock);
 
+				pthread_cond_signal(&windowCond);
+	// pthread_cond_signal(&timerEnd);
 	pthread_exit(NULL);	
 }
