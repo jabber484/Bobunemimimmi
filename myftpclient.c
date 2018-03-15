@@ -39,10 +39,9 @@ int main(int argc, char *argv[]) {
   int timeout = atoi(argv[5]);
 
   // mygbn_sender
-  struct mygbn_sender sender; 
-
+  struct mygbn_sender* sender = (struct mygbn_sender*)calloc(1, sizeof(struct mygbn_sender));
   // init mygbn_send
-  mygbn_init_sender(&sender, ip, port, N, timeout);
+  mygbn_init_sender(sender, ip, port, N, timeout);
 
   // Read the file
   int ifd = open(filename, O_RDONLY);
@@ -62,29 +61,29 @@ int main(int argc, char *argv[]) {
   // (1) send filename size
   int filenamesize = strlen(filename);
   filenamesize = htonl(filenamesize);
-  mygbn_send(&sender, (unsigned char*)&filenamesize, sizeof(filenamesize));
+  mygbn_send(sender, (unsigned char*)&filenamesize, sizeof(filenamesize));
   filenamesize = ntohl(filenamesize);
   fprintf(stdout, "APP::send filename size = %d\n", filenamesize);
   
   // (2) send file name 
-  mygbn_send(&sender, (unsigned char*)filename, filenamesize); 
+  mygbn_send(sender, (unsigned char*)filename, filenamesize); 
   fprintf(stdout, "APP::send filename = %s\n", filename);
   
   // (3) send file size 
   filesize = htonl(filesize);
-  mygbn_send(&sender, (unsigned char*)&filesize, sizeof(filesize));
+  mygbn_send(sender, (unsigned char*)&filesize, sizeof(filesize));
   filesize = ntohl(filesize); 
   fprintf(stdout, "APP::send filesize = %d\n", filesize);
   
   // (4) send actual file
-  mygbn_send(&sender, data, filesize); 
+  mygbn_send(sender, data, filesize); 
 
   // unmap, close the file
   munmap(data, filesize);
   close(ifd);
   
   // close client
-  mygbn_close_sender(&sender);
+  mygbn_close_sender(sender);
 
   return 0;
 }
