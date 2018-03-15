@@ -48,13 +48,15 @@ struct mygbn_receiver {
 
 void mygbn_init_receiver(struct mygbn_receiver* mygbn_receiver, int port);
 int mygbn_recv(struct mygbn_receiver* mygbn_receiver, unsigned char* buf, int len);
+void mygbn_check_receiver(struct mygbn_receiver* mygbn_receiver);
 void mygbn_close_receiver(struct mygbn_receiver* mygbn_receiver);
 
 //Utility 
 struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, char *payload, int payloadSize);
-int nextFragement(int fileSize);
+int nextFragement();
 
 // Thread
 void *sender_pthread(void *data);
 void *sender_ackListener(void *data);
+void *sender_final(void *data);
 #endif
