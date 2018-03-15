@@ -27,26 +27,25 @@ int main(int argc, char** argv){
   int port = atoi(argv[1]);
 
   // mygbn_receiver
-  struct mygbn_receiver receiver;
-
+  struct mygbn_receiver* receiver = (struct mygbn_receiver*)calloc(1, sizeof(struct mygbn_receiver));
   // init mygbn_receiver
-  mygbn_init_receiver(&receiver, port);
+  mygbn_init_receiver(receiver, port);
 
   while(1) {
     // (1) read filename size
     int filenamesize;
-    mygbn_recv(&receiver, (unsigned char*)&filenamesize, sizeof(filenamesize));
+    mygbn_recv(receiver, (unsigned char*)&filenamesize, sizeof(filenamesize));
     filenamesize = ntohl(filenamesize);
     printf("APP::filenamesize = %d\n", filenamesize);
 
     // (2) read filename 
     unsigned char* filename = (unsigned char*)calloc(filenamesize, sizeof(unsigned char));
-    mygbn_recv(&receiver, filename, filenamesize);
+    mygbn_recv(receiver, filename, filenamesize);
     printf("APP::filename = %s\n", filename);
 
     // (3) read file size
     int filesize;
-    mygbn_recv(&receiver, (unsigned char*)&filesize, sizeof(filesize));
+    mygbn_recv(receiver, (unsigned char*)&filesize, sizeof(filesize));
     filesize = ntohl(filesize);
     printf("APP::filesize = %d\n", filesize);
 
@@ -59,14 +58,16 @@ int main(int argc, char** argv){
     char buff[4096];
     while (f_left > 0) {
       memset(buff, 0, sizeof(buff));
-      recv_size = mygbn_recv(&receiver, (unsigned char*)buff, sizeof(buff));
+      recv_size = mygbn_recv(receiver, (unsigned char*)buff, sizeof(buff));
       f_left -= recv_size;
       fwrite(buff, 1, recv_size, ofp);
     }
     fclose(ofp);
+
+    // check whether current transfer session has finished
+    mygbn_check_receiver(receiver);
   }
 
-  mygbn_close_receiver(&receiver);
+  mygbn_close_receiver(receiver);
   return 0;
 }
-
