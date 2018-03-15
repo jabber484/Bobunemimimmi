@@ -10,9 +10,10 @@
 #include <pthread.h>
 #include "mygbn.h"
 
+pthread_t AckListener;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t listenerReady = PTHREAD_COND_INITIALIZER;
 pthread_cond_t windowCond = PTHREAD_COND_INITIALIZER;
+int killMode;
 
 // Window set-up
 int N;
@@ -22,6 +23,9 @@ int *windowPacketSize;
 int avalibleWindow;
 int remainingLength;
 int windowHead;
+
+int fragementNum;
+int lastAck;
 
 void mygbn_init_sender(struct mygbn_sender* mygbn_sender, char* ip, int port, int N, int timeout){
 	struct hostent *ht;
@@ -77,11 +81,11 @@ int mygbn_send(struct mygbn_sender* mygbn_sender, unsigned char* buf, int len){
 		window[i] = 0;
 	windowHead = 0;;
 	windowPacketSize = malloc(sizeof(int)*N);
-  	remainingLength = len;
+  	// remainingLength = len;
 
 
 	// Start Listener
-  	pthread_t AckListener;
+	killMode = 0;
 	pthread_create(&AckListener, NULL, sender_ackListener, mygbn_sender);
 
   	pthread_t senderThread;
@@ -92,6 +96,14 @@ int mygbn_send(struct mygbn_sender* mygbn_sender, unsigned char* buf, int len){
 }
 
 void mygbn_close_sender(struct mygbn_sender* mygbn_sender){
+	// printf("START CLOSE: Last Ack %d\n", lastAck);
+	killMode = 1;
+
+	pthread_t escaper;
+	pthread_create(&escaper, NULL, sender_final, mygbn_sender);
+  	pthread_join(escaper, NULL);
+
+  	printf("\nTransfer Complete\n");
 	close(mygbn_sender->sd);
 }
 
@@ -128,83 +140,78 @@ void mygbn_init_receiver(struct mygbn_receiver* mygbn_receiver, int port){
 }
 
 int mygbn_recv(struct mygbn_receiver* mygbn_receiver, unsigned char* buf, int len){
-  	memset(buf,'\0', len);
+	memset(buf,'\0', len);
   	int addrlen = sizeof(mygbn_receiver->servaddr);
   	int base = receivedPacket;
   	int nextSeqNum = base + 1;
-  	int bound = 8;
-  	int i = 0, j = 0;
-  	int localOffset = 0;
 
   	// Ack
-  	int ACK[bound];
-  	int payloadSegmentSize[bound];
-  	for(i=0;i<bound;i++){
-  		ACK[i] = 0;
-  		payloadSegmentSize[i] = 0;
-  	}
-
+  	int payloadSegmentSize = 0;
   	int received = 0;
-  	struct MYGBN_Packet *packet;	
-  	for(i = 0; i < bound; i++){ //suport for large window????
-		// Get Packet
-  		printf("GETTING DATA\n");
-		packet = malloc(sizeof(struct MYGBN_Packet));
-  		if(recvfrom(mygbn_receiver->sd, (char *)packet, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&mygbn_receiver->servaddr, (socklen_t *)&addrlen) == -1){
-  			printf("  ERROR on receiving Data\n");
-  			exit(-1);
-  		}
-  		if(localOffset == 0) /* First Time for function*/
-  			localOffset = nextSeqNum;
 
-  		 // Is END?
-  		if(packet->type == EndPacket){
-  			receivedPacket = 0;
-			printf("  TERMINATED\n");
-			break;
-  		}
+	// Get Packet
+  	struct MYGBN_Packet *packet = malloc(sizeof(struct MYGBN_Packet));
+	if(recvfrom(mygbn_receiver->sd, (char *)packet, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&mygbn_receiver->servaddr, (socklen_t *)&addrlen) == -1){
+		printf("  ERROR on receiving Data\n");
+		exit(-1);
+	}
 
-  		// Store Packet
-  		int payloadSize = packet->length - HEADER_SIZE;
-  		int localSeqNum = packet->seqNum - localOffset; /* 0 ~ 7 */
-		if(payloadSize > 0 && packet->seqNum == nextSeqNum) {	/* Store only if has payload, and payload is valid */
-  			printf("  Storing %d, Size %d\n", packet->seqNum, payloadSize);
-			ACK[localSeqNum] = packet->seqNum;
-			payloadSegmentSize[localSeqNum] = payloadSize;
-  			memcpy((char *)&buf[localSeqNum * MAX_PAYLOAD_SIZE], packet->payload, payloadSize);
+	printf("\n"); 
+	if(packet->seqNum == 1){ /* Reset due to Moving to new section*/
+		receivedPacket = 0;
+		base = receivedPacket;
+		nextSeqNum = base + 1;
+	}
+	
+	// Store Packet
+	int payloadSize = packet->length - HEADER_SIZE;
+	if(payloadSize > 0 && packet->seqNum == nextSeqNum) {	/* Store only if has payload, and payload is valid */
+		printf("  Storing %d, Size %d\n", packet->seqNum, payloadSize);
+		payloadSegmentSize = payloadSize;
+		memcpy((char *)buf, packet->payload, payloadSize);
 
-  			// packet is first segement
-  			if(packet->seqNum == nextSeqNum){
-  				// proprogate until packet not received
-  				j = localSeqNum;
-  				while(ACK[j] != 0 && j < bound){
-  					received += payloadSegmentSize[j];
-  					receivedPacket++;
-  					base++; /* ACK for i */
-  					nextSeqNum++;
-  					j++;
-  				}
-  			
-  				// Return Ack
-  				int ackNum = base;
-				struct MYGBN_Packet *ack = createPacket(AckPacket, ackNum, NULL, 0);
-  				printf("  SEND ACK %d\n", ackNum);
-		  		if(sendto(mygbn_receiver->sd, (char *)ack, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_receiver->servaddr), addrlen) == -1){
-		  			printf("  ERROR on sending Ack\n");
-		  			exit(-1);
-		  		}
-	  			free(ack);
+		received += payloadSegmentSize;
+		receivedPacket++;
+		base++; /* ACK for i */
 
-  			}
-  		} else { /* Shoot to the sea */
-  			printf("  Discard %d\n", packet->seqNum);
-  		}
+		// Return Ack
+		struct MYGBN_Packet *ack = createPacket(AckPacket, packet->seqNum, NULL, 0);
+		printf("  SEND ACK %d\n", packet->seqNum);
+		if(sendto(mygbn_receiver->sd, (char *)ack, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_receiver->servaddr), addrlen) == -1){
+			printf("  ERROR on sending Ack\n");
+			exit(-1);
+		}
 
-  		// printf("  DONE\n");
-  	}
+		free(ack);
+	} else { /* Shoot to the sea */
+		printf("  Discard %d\n", packet->seqNum);
+	}
 
-  	printf("Exit, total size %d\n", received);
+  	free(packet);
+  	printf("  Exit, total size %d\n", received);
 	return received;
+}
+
+void mygbn_check_receiver(struct mygbn_receiver* mygbn_receiver) {
+  	int addrlen = sizeof(mygbn_receiver->servaddr);
+	struct MYGBN_Packet *packet = malloc(sizeof(struct MYGBN_Packet));
+	if(recvfrom(mygbn_receiver->sd, (char *)packet, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&mygbn_receiver->servaddr, (socklen_t *)&addrlen) == -1){
+		printf("  ERROR on receiving Data\n");
+		exit(-1);
+	}
+
+	printf("\n"); 
+	// Is END?
+	if(packet->type == EndPacket){
+		printf("TERMINATING\n");
+		struct MYGBN_Packet *ack = createPacket(AckPacket, packet->seqNum, NULL, 0);
+		printf("Reply ACK %d\n", packet->seqNum);
+		if(sendto(mygbn_receiver->sd, (char *)ack, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_receiver->servaddr), addrlen) == -1){
+			printf("  ERROR on sending Ack\n");
+			exit(-1);
+		}
+		free(ack);
+	}
 }
 
 void mygbn_close_receiver(struct mygbn_receiver* mygbn_receiver) {
@@ -218,7 +225,7 @@ struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, char 
 	packet->protocol[0] = 'g';
 	packet->protocol[1] = 'b';
 	packet->protocol[2] = 'n';
-	
+
 	packet->type = type;
 	packet->seqNum = seqNum;
 	packet->length = payloadSize + HEADER_SIZE;
@@ -227,11 +234,15 @@ struct MYGBN_Packet *createPacket(unsigned char type, unsigned int seqNum, char 
 
 	return packet;
 }
-int nextFragement(int fileSize){
-	if (fileSize < MAX_PAYLOAD_SIZE)
-		return fileSize;
-	else
+int nextFragement(){
+	if (remainingLength < MAX_PAYLOAD_SIZE){
+		int returnVal = remainingLength;
+		remainingLength = 0;
+		return returnVal;
+	} else {
+		remainingLength -= MAX_PAYLOAD_SIZE;
 		return MAX_PAYLOAD_SIZE;
+	}
 }
 
 // Thread Function
@@ -246,9 +257,11 @@ void *sender_pthread(void *data) {
   	int i = 0, j = 0;
 
   	// Packet Related
-  	int FragementSize;
-	int totalPacket = 0;
+  	int FragementSize = 0;
+  	fragementNum = (len / MAX_PAYLOAD_SIZE) + (len % MAX_PAYLOAD_SIZE != 0);
+	// int totalPacket = 0;
   	remainingLength = len;
+	lastAck = 0;
 	base = 0;
 
 	// Window set-up
@@ -258,56 +271,66 @@ void *sender_pthread(void *data) {
 	}
 	windowHead = 0;
 
-	while((FragementSize = nextFragement(remainingLength)) > 0){
-		// Use a window
-      	pthread_mutex_lock(&mutex);
-		j = windowHead;
-		for(i = 0; i < N; i++) {
-			if(window[j] == 0){
-				// make packet (NEED FREE)
-				int packetSeqNum = base + i + 1;
-				window[j] = packetSeqNum;
-				char *address = (char *)&buf[(base + i)*MAX_PAYLOAD_SIZE];
-				struct MYGBN_Packet *packet = createPacket(DataPacket, packetSeqNum, address, FragementSize);
-				windowPacketSize[j] = FragementSize;
-				processing += FragementSize;
+	// Use a window
+  	pthread_mutex_lock(&mutex);
+	while(1){
+		FragementSize = nextFragement();
+		printf("FragementSize %d, Remaining %d\n", FragementSize, remainingLength);
 
-				// send packet
-				printf("  [Sender]Sending %d\n", packetSeqNum);
-				if(sendto(mygbn_sender->sd, (char *)packet, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_sender->servaddr), sizeof(mygbn_sender->servaddr)) == -1){
-					printf("ERROR on sending Ack\n");
-					exit(-1);
+		if(FragementSize > 0 ) {
+			// Start a transfer
+			j = windowHead;
+			for(i = 0; i < N; i++) {
+				if(window[j] == 0){
+					// make packet
+					int packetSeqNum = base + 1 + i;
+					window[j] = packetSeqNum;
+					char *address = (char *)&buf[(base + i)*MAX_PAYLOAD_SIZE];
+					struct MYGBN_Packet *packet = createPacket(DataPacket, packetSeqNum, address, FragementSize);
+					windowPacketSize[j] = FragementSize;
+					processing += FragementSize;
+
+					// send packet
+					printf("  [Sender]Sending %d with size %d\n", packetSeqNum, FragementSize);
+					if(sendto(mygbn_sender->sd, (char *)packet, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_sender->servaddr), sizeof(mygbn_sender->servaddr)) == -1){
+						printf("ERROR on sending Ack\n");
+						exit(-1);
+					}
+					printf("  [Sender]Sent %d\n", packetSeqNum);
+
+					free(packet);
+					avalibleWindow--;
+					// totalPacket++;
+					break;
 				}
-				printf("  [Sender]Sent %d\n", packetSeqNum);
 
-				free(packet);
-				avalibleWindow--;
-				totalPacket++;
-				break;
+				// Next window
+				j = (j+1) % N;
 			}
 
-			// Next window
-			j = (j+1) % N;
+			// Check Completion
+			if(avalibleWindow == 0){
+				printf("  Sleeppp...\n");
+				pthread_cond_wait(&windowCond, &mutex);
+			}
+
+		} else {
+			printf("[Reached Last of Window] ACK: %d/%d (%.2f %%)\n", lastAck, fragementNum, ((float)lastAck/(float)fragementNum)*100);
+			while(lastAck != fragementNum) { /* Wait for other ack? */
+				pthread_cond_wait(&windowCond, &mutex);
+			} 
+
+			// if no need resend
+				break;
+			// else
+				// resent
 		}
 
-		// Check windows
-		if(avalibleWindow == 0 || processing == len){
-			printf("  Sleeppp...\n");
-			pthread_cond_wait(&windowCond, &mutex);
-		} 
-  		pthread_mutex_unlock(&mutex);
 	}
-
-	struct MYGBN_Packet *end = createPacket(EndPacket, totalPacket + 1, NULL, 0);
-	if(sendto(mygbn_sender->sd, (char *)end, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_sender->servaddr), sizeof(mygbn_sender->servaddr)) == -1){
-		printf("ERROR on sending Ack\n");
-		exit(-1);
-	}
-	free(end);
+	pthread_mutex_unlock(&mutex);
 
 	*sent = len;
  	pthread_exit(NULL);
-	return 0;
 }
 
 void *sender_ackListener(void *data){
@@ -320,21 +343,34 @@ void *sender_ackListener(void *data){
 		printf("  [Listener]Waiting Ack\n");
 		struct MYGBN_Packet *response = calloc(sizeof(struct MYGBN_Packet),1);
 		if(recvfrom(sd, (char *)response, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&mygbn_sender->servaddr, (socklen_t *)&addrlen) == -1){
-			printf("ERROR on receiving Ack\n");
-			exit(-1);
+			if(killMode != 1){
+				printf("ERROR on receiving Ack\n");
+				exit(-1);
+			}
+		}
+
+		if(killMode == 1){ /* Intercept EVERYTHING at Kill Mode */
+			if((fragementNum + 1) == response->seqNum) {
+				pthread_mutex_lock(&mutex);
+				pthread_cond_signal(&windowCond);
+	  			pthread_mutex_unlock(&mutex);
+				break;
+			} else {
+				free(response);
+				continue;
+			}
 		}
 
 		pthread_mutex_lock(&mutex);
 		if(response->type == AckPacket){
-			printf("  Ack %d\n", response->seqNum);
 			int headSeqNum = window[windowHead];
 			if(headSeqNum <= response->seqNum && headSeqNum > 0){ /* Slide Right */
+				printf("  Ack %d\n", response->seqNum);
+				lastAck = response->seqNum;
 				int slideOffset = response->seqNum - headSeqNum + 1;
-				printf("  [debug]slide %d, response->seqNum %d, headSeqNum %d\n", slideOffset ,response->seqNum,headSeqNum);
-				printf("Slide Offset %d\n", slideOffset);
 
 				for(i = 0; i < slideOffset; i++){ /* reset window */
-					remainingLength = remainingLength - windowPacketSize[windowHead];
+					// remainingLength = remainingLength - windowPacketSize[windowHead];
 					windowPacketSize[windowHead] = 0;
 					window[windowHead] = 0;
 					windowHead = (windowHead + 1) % N;
@@ -345,16 +381,32 @@ void *sender_ackListener(void *data){
 				}
 				pthread_cond_signal(&windowCond);
 			} else if(response->seqNum == headSeqNum - 1){
-				// Resent first window
-				printf("OPPS\n");
+				// Wait Timeout to start resend
+				printf("Old ACK %d received\n", response->seqNum);
 			} 
 	  		pthread_mutex_unlock(&mutex);
 		}
 
 		free(response);
-		// break? MISSING END CONDITION
 	}
 
 	pthread_exit(NULL);
-	return 0;
+}
+
+void *sender_final(void *data){
+	struct mygbn_sender *mygbn_sender = ((struct mygbn_sender *)data);
+
+	printf("SENDING EndPacket\n");
+	struct MYGBN_Packet *end = createPacket(EndPacket, fragementNum + 1, NULL, 0);
+	if(sendto(mygbn_sender->sd, (char *)end, sizeof(struct MYGBN_Packet), 0, (struct sockaddr *)&(mygbn_sender->servaddr), sizeof(mygbn_sender->servaddr)) == -1){
+		printf("ERROR on sending EndPacket\n");
+		exit(-1);
+	}
+
+	pthread_mutex_lock(&mutex);
+	pthread_cond_wait(&windowCond, &mutex);
+	pthread_mutex_unlock(&mutex);
+
+	free(end);
+	pthread_exit(NULL);
 }
